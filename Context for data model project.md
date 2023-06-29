@@ -10,7 +10,7 @@ The top four factors affecting loan default determined by the logistic regressio
 •	Check the credit history of the applicant within the last 5 years. Any loan default, late, or missed payment need to be investigated. If an applicant miss payment or pay late more than two times within a year, he should not be approved for the loan.
 •	Limit the amount of loan. The model indicates that people who borrow more tend to default on the loan.
 The primary source of income for the bank is the difference between the money paid from loans and the money the bank pays out. Hence, if there are many loan defaults, or the difference between the money received and the money paid is negative, the bank will lose revenue and earn no profit. This is why the bank wants to have the minimum loan defaults possible.
-5. Conclusion
+* **Conclusion**
 The **logistic regression** model is the best model for this business situation with an accuracy of 95% and classification capability almost perfect, 98.9 out of 100. The model also identifies the top 4 factors explaining why customers default on loans. In conclusion, the logistic regression model will help the bank classify applicants who are likely to default on loans and those who won’t
 
 
