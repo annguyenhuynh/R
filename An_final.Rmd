@@ -1,0 +1,522 @@
+---
+title: "MIS 431 Summer 2023 Final Project"
+date: "June 25th, 2023"
+output:
+  word_document: default
+---
+
+
+**Name**: An Huynh
+
+
+
+```{r message=FALSE, warning=FALSE}
+# Suppress dplyr summarise grouping warning messages
+options(dplyr.summarise.inform = FALSE)
+
+## Add R libraries here
+library(tidyverse)
+library(tidymodels)
+library(skimr)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(vip)
+library(rpart.plot)
+
+
+# Load data
+loans_df <- read_rds("/Users/AnhHuynh/Documents/SUMMER 2023/MIS 431/Final Project/loan_data.rds")
+
+skim(loans_df)
+```
+
+
+# Data Analysis [30 Points]
+
+## Question 1: 
+
+**Question**: Is annual income a factor of loan default?
+
+
+**Answer**: Yes, both the summary table and the plot shows that lower income people tend to default on loans. On average, loan-default customers earn $8278.9 annually less than those who don't default on loan. The 25th, 50th, and 75th percentiles of annual income reflected on the box plot yield same conclusion that those who don't default on loans have higher income.
+
+# Summary table
+```{r}
+x1 <- loans_df %>%
+      group_by(loan_default) %>%
+      summarize(n_cust = n(),
+                avg_income = mean(annual_income),
+                med_income = median(annual_income))
+                                
+x1
+```
+# Data visualization
+```{r echo = TRUE, fig.height=5, fig.width=9}
+
+ggplot(loans_df, aes(x=loan_default, y=annual_income)) +
+  geom_boxplot() +
+  labs(title = "Annual income and Loan default",
+       x="Loan default", y="Annual income") +
+   theme(plot.title = element_text(hjust = 0.5))
+  
+```
+
+## Question 2
+
+
+**Question**: How do installment and interest rate impact loan default?
+
+
+**Answer**: Both installment and interest rate are factors explaining loan default, and interest rate is a stronger indicator. On average, those who default on loans have higher percent interest rate, about 5.6%, and pay roughly $73 more each month. 
+
+#Summary Table
+```{r}
+x2 <- loans_df %>%
+      group_by(loan_default) %>%
+      summarize(avg_interest = mean(interest_rate),
+                avg_installment = mean(installment))
+x2
+
+```
+# Data visualization
+```{r echo = TRUE, fig.height=5, fig.width=9}
+plot1 <- ggplot(loans_df, aes(x=interest_rate))+
+  geom_histogram(bins = 50 ) +
+  facet_wrap(~loan_default)
+
+plot2 <- ggplot(loans_df,aes(x=installment)) +
+  geom_histogram(bins=50) +
+  facet_wrap(~loan_default)
+
+plot_grid(plot1, plot2, labels=c("interest_rate", "installment"), nrow=2 )
+
+```
+
+## Question 3
+
+
+**Question**: Is there a difference among homeownership status regard to loan default?
+
+
+**Answer**: Yes, there is a striking difference among the three groups. Renters make up the majority of those who have loan default, followed by those who are still contributing to home mortgage, and those who have paid off their mortgage account for the lowest percent. 
+
+
+```{r}
+x3 <- loans_df %>%
+      filter(loan_default=="yes") %>%
+      group_by(homeownership) %>%
+      summarize(n_customers = n()) %>%
+      arrange(homeownership)
+x3
+
+ggplot(x3, aes(x=homeownership, y=n_customers, fill=homeownership)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  labs (title = "Homeownership status vs. Loan default",
+        x="Homeownership status", y="Customers")
+  
+
+```
+
+
+
+# Predictive Modeling [70 Points]
+
+## Model 1
+
+### Data Splitting
+```{r}
+set.seed(345) 
+
+loan_split <- initial_split(loans_df, prop=3/4, strata = loan_default)
+
+#Training set
+loan_train <- loan_split %>% training()
+
+#Testing set
+loan_test <- loan_split %>% testing()
+
+```
+### Featuring Engineer
+```{r}
+loan_recipe <- recipe(loan_default ~ ., data = loan_train) %>% 
+                step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+                step_normalize(all_numeric(), -all_outcomes()) %>% 
+                step_dummy(all_nominal(), -all_outcomes())
+```
+```{r}
+loan_recipe %>% 
+  prep() %>% 
+  bake(new_data = loan_train)
+```
+### Model Specification
+```{r}
+logistic_model <- logistic_reg() %>% 
+                  set_engine('glm') %>% 
+                  set_mode('classification')
+logistic_model
+```
+### Create a workflow
+```{r}
+loan_wf <- workflow() %>%
+           add_model(logistic_model) %>%
+           add_recipe(loan_recipe)
+loan_wf
+```
+### Fit the model
+```{r}
+loan_logistic_fit <- loan_wf %>%
+  fit(data=loan_train)
+
+loan_logistic_fit
+```
+### Exploring trained model
+```{r}
+#Extract train model from workflow
+loan_trained_model <- loan_logistic_fit %>%
+                      extract_fit_parsnip()
+loan_trained_model
+```
+### Variable Importance
+```{r}
+vip(loan_trained_model)
+```
+### Evaluate Performance
+```{r}
+#Predicting categories
+pred_categories <- predict(loan_logistic_fit,new_data = loan_test)
+pred_categories
+
+#Predicting probabilities
+pred_prob <- predict(loan_logistic_fit,new_data = loan_test,type = 'prob')
+pred_prob
+```
+```{r}
+#Combine results from above with true response variable values in our test data set
+test_results <- loan_test %>%
+                select(loan_default) %>%
+                bind_cols(pred_categories) %>%
+                bind_cols(pred_prob)
+test_results
+```
+### Exploring Performance Metrics
+
+#### Confusion Matrix
+```{r}
+conf_mat(test_results,truth = loan_default,estimate = .pred_class)
+```
+#### F1 score
+```{r}
+f_meas(test_results,truth = loan_default,estimate = .pred_class)
+```
+#### ROC curve
+```{r}
+autoplot(roc_curve(test_results,loan_default,.pred_yes))
+
+# Area under the ROC curve
+roc_auc(test_results,loan_default, .pred_yes)
+
+```
+#### Creating custom metric sets
+```{r}
+my_metrics <- metric_set(yardstick::accuracy,f_meas)
+my_metrics(test_results,truth=loan_default,estimate=.pred_class)
+```
+## Automate the process
+```{r}
+# Automate the metrics process
+last_fit_model <- loan_wf %>%
+  last_fit(split = loan_split)
+
+# Accuracy and area under ROC
+last_fit_model %>% collect_metrics()
+
+# Obtain data frames with predictions
+last_fit_results <- last_fit_model%>% collect_predictions()
+
+
+last_fit_results %>% 
+  roc_curve(loan_default,.pred_yes) %>%
+  autoplot()
+```
+## Model 2
+
+### Creating folds for cross validation on training dataset
+```{r}
+# These will be used to tune hyperparameters
+set.seed(345)
+loan_folds <- vfold_cv(loan_train, v=5)
+
+loan_folds
+```
+### Model specification
+```{r}
+knn_model <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine('kknn') %>%
+  set_mode('classification')
+
+knn_model
+```
+### Create Workflow
+```{r}
+knn_wf <- workflow() %>%
+  add_model(knn_model) %>%
+  add_recipe(loan_recipe)
+
+knn_wf
+```
+### Hyperparameter Tuning - Create neighbor grid
+```{r}
+k_grid <- tibble(neighbors = c(10,20,30,50,75,100,125,150))
+k_grid
+```
+### Hyperparameter Tuning - Tune Workflow
+```{r}
+set.seed(345)
+
+knn_tunning <- knn_wf%>%
+  tune_grid(resamples = loan_folds, grid = k_grid)
+
+knn_tunning
+```
+### Hyperparameter Tuning - Access Model Performance
+```{r}
+knn_tunning %>%
+  show_best('roc_auc')
+
+# Select the best model based on roc_auc
+best_k <- knn_tunning %>%
+  select_best(metric = 'roc_auc')
+best_k
+```
+### Hyperparameter Tuning - Finalize workflow with best performance model
+```{r}
+final_knn_wf <- knn_wf %>%
+  finalize_workflow(best_k)
+final_knn_wf
+```
+### Fit the model
+```{r}
+# Fit the model
+knn_wf_fit <- final_knn_wf %>%
+  fit(data=loan_train)
+
+#Explore trained model
+knn_fit <- knn_wf_fit %>%
+  extract_fit_parsnip()
+knn_fit
+```
+### Hyperparameter Tuning - Train, Evaluate and Collect metrics
+```{r}
+# Train and Evaluate
+last_fit_knn <- final_knn_wf %>%
+  last_fit(split = loan_split)
+
+#Collect metrics
+last_fit_knn %>% collect_metrics()
+```
+### Evaluate performance
+```{r}
+pred_categories <- predict(knn_wf_fit,new_data = loan_test)
+pred_categories
+
+#Predicting probabilities
+pred_prob <- predict(knn_wf_fit,new_data = loan_test,type = 'prob')
+pred_prob
+
+#Combine results from above with true response variable values in our test data set
+test_results_1 <- loan_test %>%
+                select(loan_default) %>%
+                bind_cols(pred_categories) %>%
+                bind_cols(pred_prob)
+test_results_1
+```
+### Exploring Performance Metrics
+
+#### ROC Curve
+```{r}
+# Collect predictions
+knn_predictions <- last_fit_knn %>% collect_predictions()
+
+knn_predictions %>%
+  roc_curve(loan_default,.pred_yes) %>%
+  autoplot()
+```
+#### Confusion Matrix
+```{r}
+conf_mat(knn_predictions,loan_default,.pred_class)
+```
+#### F1 score
+```{r}
+f_meas(test_results_1,truth = loan_default,estimate = .pred_class)
+```
+### Creating custom metric set
+```{r}
+my_metrics <- metric_set(yardstick::accuracy,f_meas)
+my_metrics(test_results_1,truth=loan_default,estimate=.pred_class)
+```
+## Model 3
+```{r}
+skim(loans_df)
+```
+### Model Specification
+```{r}
+tree_model <- decision_tree(cost_complexity = tune(),
+                            tree_depth = tune(), min_n = tune()) %>%
+  set_engine('rpart') %>%
+  set_mode('classification')
+tree_model
+```
+### Execute a workflow
+```{r}
+tree_wf <- workflow() %>%
+  add_model(tree_model) %>%
+  add_recipe(loan_recipe)
+```
+### Hyperparameter Tuning - Create grid
+```{r}
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(),
+                          levels = 2)
+tree_grid
+```
+### Tuning hyperparameters
+```{r}
+set.seed(345)
+tree_tuning <- tree_wf %>%
+  tune_grid(resamples = loan_folds, grid = tree_grid)
+
+```
+### Top 5 models
+```{r}
+tree_tuning %>% show_best('roc_auc')
+
+# Select best model based on roc_auc
+best_tree <- tree_tuning %>%
+  select_best(metric = 'roc_auc')
+
+best_tree
+```
+### Finalize workflow
+```{r}
+final_tree_wf <- tree_wf %>%
+  finalize_workflow(best_tree)
+final_tree_wf
+```
+### Visualize results
+```{r}
+# Fit the model
+tree_wf_fit <- final_tree_wf %>%
+  fit(data = loan_train)
+```
+```{r}
+tree_fit <- tree_wf_fit %>%
+ extract_fit_parsnip()
+```
+### Variable importance
+```{r}
+vip(tree_fit)
+```
+### Decision tree plot
+```{r}
+rpart.plot(tree_fit$fit, roundint = FALSE)
+```
+### Train and Evaluate
+```{r}
+tree_last_fit <- final_tree_wf %>%
+  last_fit(loan_split)
+```
+### Evaluate performance
+```{r}
+pred_categories <- predict(tree_wf_fit,new_data = loan_test)
+pred_categories
+
+#Predicting probabilities
+pred_prob <- predict(tree_wf_fit,new_data = loan_test,type = 'prob')
+pred_prob
+
+#Combine results from above with true response variable values in our test data set
+test_results_2<- loan_test %>%
+                select(loan_default) %>%
+                bind_cols(pred_categories) %>%
+                bind_cols(pred_prob)
+test_results_2
+```
+### Accuracy and Area under the ROC curve
+```{r}
+tree_last_fit %>% collect_metrics()
+```
+### Collect predictions
+```{r}
+tree_prediction <- tree_last_fit %>% collect_predictions()
+tree_prediction
+```
+### Exploring performance metrics
+
+#### ROC curve
+```{r}
+tree_prediction %>%
+  roc_curve(loan_default, .pred_yes) %>%
+  autoplot()
+```
+#### Confusion matrix
+```{r}
+conf_mat(tree_prediction, loan_default, .pred_class)
+```
+#### F1 score
+```{r}
+f_meas(test_results_2,truth = loan_default,estimate = .pred_class)
+```
+
+
+# Summary of Results [50 Points]
+
+**1. Introduction**
+
+This company wants to determine the factors causing default on loans and build a model to predict the likelihood of an applicant defaulting on loans. 
+Since lending money is the major business operation of the company, loan defaulting can negatively impact the company's net income and profit. That is why they want to minimize the risk by declining those who are likely not to pay back, but at the same time, they don't want to reject customers who have the potential to pay back both the capital and the interest on time. 
+Our job as data analysts are to build and select the best predicting model so that the company can make better decisions on when to decline an application and when to accept one. 
+
+**2. Highlights and key findings from  Exploratory Data Analysis**  
+
+The dataset consists of 16 variables and 4110 observations. Exploratory data analysis shows that people who default on loans have lower annual income, have higher interest rates, and pay higher each month compared to those who don't default on loans. Interestingly, homeowners are the group that has the lowest loan default rate, and renters make up the majority of loan defaulting. 
+The brief analysis gives us an idea of the factors affecting the ability to pay back loans. To precisely use the combination of these factors to decide whether to lend someone money, we need to build a model that yields the most optimal decision whenever someone submits an application for a loan. 
+
+**3. Your “best” classification model and an analysis of its performance** 
+
+Based on the accuracy, F1 score, and area under the curve (AUC), the logistic regression model is the best-predicting model for this business scenario. 
+Accuracy is calculated based on the confusion matrix. The formula for accuracy is:
+ 				(TP + TN)/(TP + FP +FN + FP) 
+TP: True Positive
+TN: True Negative
+FP: False Positive
+FN: False Negative
+The higher the accuracy, the better the model. Among the three models, logistic regression has the highest accuracy score, 0.952 or 95.2%. The KNN model has the lowest accuracy score of 0.812 or 81.2%. 
+F1 score is an error metric ranging from 0 to 1, with 0 representing the worst and 1 being the best. Again, among the three models, the logistic model has the highest F1 score of 0.935, followed by the decision tree model with 0.88, and KNN has the lowest score of 0.7.
+The final metric used to determine the best model is the area under the ROC curve (AUC). This metric tells us how well a model performs case separation (classifying loan_default and no_loan_default). The higher the number, the better the model at classifying the two categories. Among the three models, the logistic model has the highest AUC of 0.989, followed by the decision tree with 0.965, and the KNN model with 0.892.
+In short, based on these three metrics - accuracy, F1 score, and AUC, we conclude that the logistic regression model is the best for predicting the potentiality of loan default based on the top four factors - loan terms, monthly payment, loan amount, and interest rate.  
+
+
+**4. Your recommendations to the company on how to reduce loan default rates** 
+  
+The top four factors affecting loan default determined by the logistic regression model are - loan term, monthly payment, loan amount, and interest rate. 
+All the four elements determined above strongly interrelate. When people apply for a loan, their interest rate and monthly payment are determined by multiple factors such as annual income, history of late payment or bankruptcy, credit score, etc. For some applicants, interest rates and monthly payments are high due to bad credit history. Bad credit history is a red flag for lenders because the borrowers can delay or default on loans like they did in the past. 
+In addition, when people take out a large sum of money, they tend to have longer-term loans. However, the longer the term, the more likely they default on the loan. 
+
+Recommendations:
+
++ Check the credit history of the applicant within the last 5 years. Any loan default, late, or missed payment need to be investigated. If an applicant miss payment or pay late more than two times within a year, he should not be approved for the loan.
+
++ Limit the amount of loan. The model indicates that people who borrow more tend to default on the loan. 
+
+The primary source of income for the bank is the difference between the money paid from loans and the money the bank pays out. Hence, if there are many loan defaults, or the difference between the money received and the money paid is negative, the bank will lose revenue and earn no profit. This is why the bank wants to have the minimum loan defaults possible. 
+
+
+**5. Conclusion**
+
+The logistic regression model is the best model for this business situation with an accuracy of 95% and classification capability almost perfect, 98.9 out of 100. The model also identifies the top 4 factors explaining why customers default on loans. In conclusion, the logistic regression model will help the bank classify applicants who are likely to default on loans and those who won't
+
+
+--------------------
+
