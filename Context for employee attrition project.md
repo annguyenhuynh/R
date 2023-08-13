@@ -6,5 +6,5 @@
 
 * **Methods**: This report comprise of summary tables and data visualizations. Main packages used in this project include: ‘readxl’ to import .xlsx file into R; ‘dplyr’ for pipe operating; ‘ggplot2’ for data visualization; and ‘skimr’ to skim through data.
 
-  * **Note**: The report of this project is knitted to word document save as "An_project_updated"
+* **Note**: The report of this project is knitted to word document save as "An_project_updated"
 
